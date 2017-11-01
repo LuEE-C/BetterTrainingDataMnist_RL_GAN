@@ -37,9 +37,9 @@ def policy_loss(actual_value, predicted_value, old_prediction):
 
 
 class Agent:
-    def __init__(self, training_epochs=10, from_save=False, amount_per_class=10, amount_of_examples=1000):
+    def __init__(self, training_epochs=10, from_save=False, amount_per_class=10):
         self.training_epochs = training_epochs
-        self.environnement = Environnement(amount_per_class=amount_per_class, amount_of_examples=amount_of_examples)
+        self.environnement = Environnement(amount_per_class=amount_per_class)
         self.priority_replay = PriorityExperienceReplay(500)
         self.batch_size = amount_per_class * 10
 
@@ -55,6 +55,11 @@ class Agent:
 
         if from_save is True:
             self.actor_critic.load_weights('actor_critic')
+        if os.path.isfile('pre_trained_actor_critic'):
+            self.actor_critic.load_weights('pre_trained_actor_critic')
+        else:
+            self.pretrain_actor_critic()
+            self.actor_critic.load_weights('pre_trained_actor_critic')
 
     def _build_actor_critic(self):
 
@@ -105,6 +110,58 @@ class Agent:
 
         actor_critic.summary()
         return actor_critic
+
+    def pretrain_actor_critic(self):
+        state_input = Input(shape=(28, 28, 1))
+        # class_input = Input(shape=(1,))
+
+        # Used for loss function
+        actual_value = Input(shape=(1,))
+        predicted_value = Input(shape=(1,))
+        old_predictions = Input(shape=(28, 28, 1))
+
+        main_network = Conv2D(256, (3, 3), padding='same')(state_input)
+        main_network = PReLU()(main_network)
+        main_network = BatchNormalization()(main_network)
+        main_network = MaxPool2D()(main_network)
+
+        main_network = Conv2D(128, (3, 3), padding='same')(main_network)
+        main_network = PReLU()(main_network)
+        main_network = BatchNormalization()(main_network)
+        main_network = MaxPool2D()(main_network)
+
+        main_network = Conv2D(128, (3, 3), padding='same')(main_network)
+        main_network = PReLU()(main_network)
+        main_network = BatchNormalization()(main_network)
+        main_network = UpSampling2D()(main_network)
+
+        main_network = Conv2D(256, (3, 3), padding='same')(main_network)
+        main_network = PReLU()(main_network)
+        main_network = BatchNormalization()(main_network)
+        main_network = UpSampling2D()(main_network)
+
+        actor = Conv2D(1, (3, 3), padding='same', activation='sigmoid')(main_network)
+
+        flat = GlobalMaxPooling2D()(main_network)
+
+        critic = Dense(1)(flat)
+        input_class = Dense(10, activation='softmax')(flat)
+
+        actor_critic = Model(inputs=[state_input, actual_value, predicted_value, old_predictions],
+                             outputs=[actor, critic, input_class])
+        actor_critic.compile(optimizer='adam',
+                             loss=['mse',
+                                   'mse',
+                                   'sparse_categorical_crossentropy'
+                                   ])
+
+        actor_critic.summary()
+
+        x_train, y_train = self.environnement.get_whole_training_set()
+
+        actor_critic.fit([x_train, np.zeros((x_train.shape[0], 1)), np.zeros((x_train.shape[0], 1)), np.zeros(x_train.shape)], [x_train, np.zeros((x_train.shape[0], 1)), y_train], batch_size=128, epochs=20, verbose=1)
+        actor_critic.save_weights('pre_trained_actor_critic')
+
 
     def train(self, epoch):
 
@@ -204,5 +261,5 @@ def get_actions(old_predictions):
 
 
 if __name__ == '__main__':
-    agent = Agent(amount_per_class=15, amount_of_examples=25000)
+    agent = Agent(amount_per_class=15)
     agent.train(epoch=5000)
