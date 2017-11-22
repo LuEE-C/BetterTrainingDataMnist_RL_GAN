@@ -3,7 +3,7 @@ import numba as nb
 from lightgbm import LGBMClassifier
 import os
 from keras.datasets import mnist
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, accuracy_score
 import warnings
 warnings.filterwarnings("ignore")
 

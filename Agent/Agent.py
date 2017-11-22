@@ -5,12 +5,12 @@ import numpy as np
 import pickle
 
 import keras.backend as K
-from keras.layers import Input, Dense, PReLU, BatchNormalization, Conv2D, Flatten
+from keras.layers import Input, Dense, PReLU, Flatten, Concatenate
 from keras.models import Model
 from keras.optimizers import Adam
 
 from NoisyDense import NoisyDense
-from PriorityExperienceReplay import PriorityExperienceReplay
+from DenseNet import DenseNet
 
 from Environnement.Environnement import Environnement
 
@@ -33,9 +33,8 @@ class Agent:
     def __init__(self, training_epochs=10, from_save=False, amount_per_class=10):
         self.training_epochs = training_epochs
         self.environnement = Environnement(amount_per_class=amount_per_class)
-        self.priority_replay = PriorityExperienceReplay(500)
         self.batch_size = amount_per_class * 10
-        self.noise = 0.5
+        self.noise = 0.05
 
         # Bunch of placeholders values
         self.dummy_value = np.zeros((self.batch_size, 1))
@@ -59,33 +58,40 @@ class Agent:
         predicted_value = Input(shape=(1,))
         old_predictions = Input(shape=(784,))
 
-        main_network = Conv2D(128, (3,3), padding='same', strides=(2,2))(state_input)
-        main_network = PReLU()(main_network)
-        main_network = BatchNormalization()(main_network)
+        class_input = Input(shape=(1,))
+        digit_class = Dense(128)(class_input)
+        digit_class = PReLU()(digit_class)
+        digit_class = Dense(128)(digit_class)
+        digit_class = PReLU()(digit_class)
 
-        main_network = Conv2D(128, (3,3), padding='same', strides=(2,2))(main_network)
-        main_network = PReLU()(main_network)
-        main_network = BatchNormalization()(main_network)
-
+        main_network = DenseNet(state_input, nb_layers=7, nb_dense_block=3, growth_rate=20,
+             nb_filter=64)
         main_network = Flatten()(main_network)
 
-        actor = Dense(128)(main_network)
-        actor = PReLU()(actor)
-        actor = BatchNormalization()(actor)
-        actor = Dense(128)(actor)
-        actor = PReLU()(actor)
-        actor = BatchNormalization()(actor)
-        actor = NoisyDense(28*28, activation='tanh', name='actor_output')(actor)
+        main_network = Concatenate()([main_network, digit_class])
 
-        critic = Dense(128)(main_network)
-        critic = PReLU()(critic)
-        critic = BatchNormalization()(critic)
-        critic = Dense(128)(critic)
-        critic = PReLU()(critic)
-        critic = BatchNormalization()(critic)
-        critic = Dense(1)(critic)
+        main_network = Dense(512)(main_network)
+        main_network = PReLU()(main_network)
 
-        actor_critic = Model(inputs=[state_input, actual_value, predicted_value, old_predictions],
+
+        actor = Dense(1024)(main_network)
+        actor = PReLU()(actor)
+        actor = Dense(1024)(actor)
+        actor = PReLU()(actor)
+        # actor = NoisyDense(28 * 28, activation='tanh', sigma_init=0.5, name='actor_output')(actor)
+        actor = Dense(28 * 28, activation='tanh')(actor)
+
+        critic = Dense(1024)(main_network)
+        critic = PReLU()(critic)
+        critic = Dense(1024)(critic)
+        critic = PReLU()(critic)
+        critic = Dense(1)(critic
+
+
+
+                          )
+
+        actor_critic = Model(inputs=[state_input, actual_value, predicted_value, old_predictions, class_input],
                              outputs=[actor, critic])
         actor_critic.compile(optimizer=Adam(),
                       loss=[policy_loss(actual_value=actual_value,
@@ -112,25 +118,20 @@ class Agent:
             while done is False:
 
                 batch_x, batch_f1, batch_y = self.environnement.query_state()
-                old_predictions, predicted_values = self.actor_critic.predict([batch_x, self.dummy_value, self.dummy_value, self.dummy_predictions])
-                actions, new_predictions = get_actions(old_predictions, batch_x, self.noise)
+                old_predictions, predicted_values = self.actor_critic.predict([batch_x, self.dummy_value, self.dummy_value, self.dummy_predictions, batch_y])
+                actions, new_predictions = self.get_actions(old_predictions, batch_x)
                 values, test = self.get_values(new_predictions, batch_f1, batch_y)
                 value_list.append(np.mean(values))
                 test_values_list.append(np.mean(test))
 
                 tmp_loss = np.zeros(shape=(self.training_epochs, 2))
                 for i in range(self.training_epochs):
-                    tmp_loss[i] = (self.actor_critic.train_on_batch([batch_x, values, predicted_values, old_predictions],
+                    tmp_loss[i] = (self.actor_critic.train_on_batch([batch_x, values, predicted_values, old_predictions, batch_y],
                                                                     [actions, values])[1:])
                 policy_losses.append(np.mean(tmp_loss[:,0]))
                 critic_losses.append(np.mean(tmp_loss[:,1]))
-                self.actor_critic.get_layer('actor_output').sample_noise()
 
-                # self.priority_replay.add_elem(critic_losses[-1], [batch_x, values, predicted_values, old_predictions, actions, values, batch_y])
-
-
-                if batch_num % 500 == 0:
-                    # self.play_priority_replay(100)
+                if batch_num % 1000 == 0:
                     self.save_losses(critic_losses, policy_losses, value_list, test_values_list)
                     self.print_most_recent_losses(batch_num, e, value_list, test_values_list)
                     value_list, test_values_list, policy_losses, critic_losses = [], [], [], []
@@ -140,24 +141,6 @@ class Agent:
                 batch_num += 1
             e += 1
 
-    def play_priority_replay(self, n=100):
-        self.replay_policy_losses = []
-        self.replay_critic_losses = []
-        self.replay_classification_losses = []
-        priority_batches = self.priority_replay.get_n_largest(n)
-
-        for batches in priority_batches:
-            for i in range(self.training_epochs):
-                tmp_loss = np.zeros(shape=(self.training_epochs, 3))
-                tmp_loss[i] = (self.actor_critic.train_on_batch(
-                    [batches[1][0], batches[1][1], batches[1][2], batches[1][3]],
-                    [batches[1][4], batches[1][5], batches[1][6]])[1:])
-            self.replay_policy_losses.append(np.mean(tmp_loss[:, 0]))
-            self.replay_critic_losses.append(np.mean(tmp_loss[:, 1]))
-            self.replay_classification_losses.append(np.mean(tmp_loss[:, 2]))
-            self.priority_replay.add_elem(self.replay_critic_losses[-1],
-                                          [batches[1][0], batches[1][1], batches[1][2], batches[1][3],
-                                           batches[1][4], batches[1][5], batches[1][6]])
 
     def save_losses(self, critic_losses, policy_losses, values, test_values):
         self.critic_losses.append(np.mean(critic_losses))
@@ -172,12 +155,9 @@ class Agent:
     def print_most_recent_losses(self, batch_num, e, value_list, test_values_list):
         print()
         print('Batch number :', batch_num, '\tEpoch :', e, '\tAverage values :', np.mean(value_list), '\tAverage test values :', np.mean(test_values_list))
-        print('Policy losses :', '%.5f' % self.policy_losses[-1],
-              '\tCritic losses :', '%.5f' % self.critic_losses[-1],
-              '\tAverage Noisy Layer :','%.5f' % self.print_average_weight()
-              # '\tReplay Policy losses :', '%.5f' % np.mean(self.replay_policy_losses),
-              # '\tReplay Critic losses :', '%.5f' % np.mean(self.replay_critic_losses),
-              # '\tReplay Classification losses :', '%.5f' % np.mean(self.replay_classification_losses)
+        print('Policy losses :', '%.5f' % np.mean(self.policy_losses[-1000:]),
+              '\tCritic losses :', '%.5f' % np.mean(self.critic_losses[-1000:]),
+              # '\tAverage Noisy Layer :','%.5f' % self.print_average_weight()
               )
 
 
@@ -193,15 +173,15 @@ class Agent:
         return values, test
 
 
-@nb.jit
-def get_actions(old_predictions, old_state, noise):
-    actions = np.random.normal(loc=0, scale=noise, size=old_predictions.shape) + old_predictions
-    actions = np.clip(actions, -1, 1)
-    new_predictions = actions + np.reshape(old_state, (actions.shape))
-    new_predictions = np.clip(new_predictions, -1, 1)
-    return actions, new_predictions
+    @nb.jit
+    def get_actions(self, old_predictions, old_state):
+        actions = np.random.normal(loc=0, scale=self.noise, size=old_predictions.shape) + old_predictions
+        actions = np.clip(actions, -1, 1)
+        new_predictions = actions * 2 + np.reshape(old_state, (actions.shape))
+        new_predictions = np.clip(new_predictions, -1, 1)
+        return actions, new_predictions
 
 
 if __name__ == '__main__':
-    agent = Agent(amount_per_class=1)
+    agent = Agent(amount_per_class=10)
     agent.train(epoch=5000)

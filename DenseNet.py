@@ -1,29 +1,31 @@
 # Mostly from https://github.com/tdeboissiere/DeepLearningImplementations/blob/master/DenseNet/densenet.py
 
-from keras.layers.core import Dropout
-from keras.layers.convolutional import Conv1D
-from keras.layers.pooling import AveragePooling1D
-from keras.layers.pooling import GlobalAveragePooling1D
-from keras.layers.merge import concatenate
+from keras.models import Model
+from keras.layers.core import Dropout, Activation
+from keras.layers.convolutional import Conv2D
+from keras.layers.pooling import AveragePooling2D
+from keras.layers import Input, Concatenate
 from keras.layers.normalization import BatchNormalization
 from keras.layers.advanced_activations import PReLU
 from keras.regularizers import l2
+import keras.backend as K
 
 
 def conv_factory(x, nb_filter, dropout_rate=None, weight_decay=1E-4):
-    """Apply BatchNorm, Relu 3Conv1D, optional dropout
+    """Apply BatchNorm, Relu 3x3Conv2D, optional dropout
     :param x: Input keras network
     :param nb_filter: int -- number of filters
     :param dropout_rate: int -- dropout rate
     :param weight_decay: int -- weight decay factor
-    :returns: keras network with b_norm, relu and convolution2d added
+    :returns: keras network with b_norm, relu and Conv2D added
     :rtype: keras network
     """
 
-    x = BatchNormalization(gamma_regularizer=l2(weight_decay),
+    x = BatchNormalization(axis=1,
+                           gamma_regularizer=l2(weight_decay),
                            beta_regularizer=l2(weight_decay))(x)
     x = PReLU()(x)
-    x = Conv1D(nb_filter, 3,
+    x = Conv2D(nb_filter, (3, 3),
                kernel_initializer="he_uniform",
                padding="same",
                use_bias=False,
@@ -35,7 +37,7 @@ def conv_factory(x, nb_filter, dropout_rate=None, weight_decay=1E-4):
 
 
 def transition(x, nb_filter, dropout_rate=None, weight_decay=1E-4, compression_rate=0.5):
-    """Apply BatchNorm, Relu 1Conv1D, optional dropout and Maxpooling1D
+    """Apply BatchNorm, Relu 1x1Conv2D, optional dropout and Maxpooling2D
     :param x: keras model
     :param nb_filter: int -- number of filters
     :param dropout_rate: int -- dropout rate
@@ -43,20 +45,21 @@ def transition(x, nb_filter, dropout_rate=None, weight_decay=1E-4, compression_r
     :returns: model
     :rtype: keras model, after applying batch_norm, relu-conv, dropout, maxpool
     """
-    nb_filter = int(nb_filter*compression_rate)
-    x = BatchNormalization(gamma_regularizer=l2(weight_decay),
+
+    x = BatchNormalization(axis=1,
+                           gamma_regularizer=l2(weight_decay),
                            beta_regularizer=l2(weight_decay))(x)
     x = PReLU()(x)
-    x = Conv1D(nb_filter, 1,
+    x = Conv2D(int(nb_filter * compression_rate), (1, 1),
                kernel_initializer="he_uniform",
                padding="same",
                use_bias=False,
                kernel_regularizer=l2(weight_decay))(x)
     if dropout_rate:
         x = Dropout(dropout_rate)(x)
-    x = AveragePooling1D()(x)
+    x = AveragePooling2D((2, 2), strides=(2, 2))(x)
 
-    return x, nb_filter
+    return x
 
 
 def denseblock(x, nb_layers, nb_filter, growth_rate,
@@ -74,10 +77,16 @@ def denseblock(x, nb_layers, nb_filter, growth_rate,
     """
 
     list_feat = [x]
+
+    if K.image_dim_ordering() == "th":
+        concat_axis = 1
+    elif K.image_dim_ordering() == "tf":
+        concat_axis = -1
+
     for i in range(nb_layers):
         x = conv_factory(x, growth_rate, dropout_rate, weight_decay)
         list_feat.append(x)
-        x = concatenate(list_feat)
+        x = Concatenate(axis=concat_axis)(list_feat)
         nb_filter += growth_rate
 
     return x, nb_filter
@@ -86,14 +95,14 @@ def denseblock(x, nb_layers, nb_filter, growth_rate,
 def DenseNet(input_tensor, nb_layers, nb_dense_block, growth_rate,
              nb_filter, dropout_rate=None, weight_decay=1E-4, compression_rate=0.5):
     """ Build the DenseNet model
-    :param input_tensor: keras functionnal api tensor
-    :param nb_layers: int -- how many layers in 1 dense block
+    :param nb_classes: int -- number of classes
+    :param img_dim: tuple -- (channels, rows, columns)
+    :param depth: int -- how many layers
     :param nb_dense_block: int -- number of dense blocks to add to end
     :param growth_rate: int -- number of filters to add
     :param nb_filter: int -- number of filters
     :param dropout_rate: float -- dropout rate
     :param weight_decay: float -- weight decay
-    :param compression_rate: float -- compression_rate
     :returns: keras model with nb_layers of conv_factory appended
     :rtype: keras model
     """
@@ -101,9 +110,10 @@ def DenseNet(input_tensor, nb_layers, nb_dense_block, growth_rate,
     model_input = input_tensor
 
     # Initial convolution
-    x = Conv1D(nb_filter, 7,
+    x = Conv2D(nb_filter, (3, 3),
                kernel_initializer="he_uniform",
                padding="same",
+               name="initial_conv2D",
                use_bias=False,
                kernel_regularizer=l2(weight_decay))(model_input)
 
@@ -113,7 +123,7 @@ def DenseNet(input_tensor, nb_layers, nb_dense_block, growth_rate,
                                   dropout_rate=dropout_rate,
                                   weight_decay=weight_decay)
         # add transition
-        x, nb_filter = transition(x, nb_filter, dropout_rate=dropout_rate,
+        x = transition(x, nb_filter, dropout_rate=dropout_rate,
                        weight_decay=weight_decay, compression_rate=compression_rate)
 
     # The last denseblock does not have a transition
@@ -121,10 +131,10 @@ def DenseNet(input_tensor, nb_layers, nb_dense_block, growth_rate,
                               dropout_rate=dropout_rate,
                               weight_decay=weight_decay)
 
-    x = BatchNormalization(gamma_regularizer=l2(weight_decay),
+    x = BatchNormalization(axis=1,
+                           gamma_regularizer=l2(weight_decay),
                            beta_regularizer=l2(weight_decay))(x)
     x = PReLU()(x)
-    # Skiped Global average pooling, more interesting to feed found patterns to lstm
-    x = GlobalAveragePooling1D()(x)
+
 
     return x
