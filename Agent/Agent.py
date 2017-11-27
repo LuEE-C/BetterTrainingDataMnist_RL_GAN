@@ -124,6 +124,7 @@ class Agent:
 
     def print_average_weight(self):
         mean = np.mean(self.actor.get_layer('actor_output').get_weights()[1])
+        # The exploration noise is relative to the learned amount of noise
         self.noise = 0.05 + 1 * mean
         return mean
 
@@ -154,7 +155,7 @@ class Agent:
                 policy_losses.append(np.mean(tmp_loss[:,0]))
                 critic_losses.append(np.mean(tmp_loss[:,1]))
 
-                if batch_num % 5000 == 0:
+                if batch_num % 1000 == 0:
                     self.save_losses(critic_losses, policy_losses, value_list, test_values_list)
                     self.print_most_recent_losses(batch_num, e, value_list, test_values_list)
                     value_list, test_values_list, policy_losses, critic_losses = [], [], [], []
@@ -179,8 +180,8 @@ class Agent:
     def print_most_recent_losses(self, batch_num, e, value_list, test_values_list):
         print()
         print('Batch number :', batch_num, '\tEpoch :', e, '\tAverage values :', np.mean(value_list), '\tAverage test values :', np.mean(test_values_list))
-        print('Policy losses :', '%.5f' % np.mean(self.policy_losses[-5000:]),
-              '\tCritic losses :', '%.5f' % np.mean(self.critic_losses[-5000:]),
+        print('Policy losses :', '%.5f' % np.mean(self.policy_losses[-1000:]),
+              '\tCritic losses :', '%.5f' % np.mean(self.critic_losses[-1000:]),
               '\tAverage Noisy Layer :','%.5f' % self.print_average_weight()
               )
 
@@ -210,5 +211,5 @@ class Agent:
 
 
 if __name__ == '__main__':
-    agent = Agent(amount_per_class=1)
+    agent = Agent(amount_per_class=5)
     agent.train(epoch=5000)
