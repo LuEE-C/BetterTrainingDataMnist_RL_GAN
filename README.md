@@ -5,7 +5,7 @@ Using a reinforcement learning model to generate "better" training samples for m
 
 It uses Proximal Policy Optimisation https://arxiv.org/abs/1707.06347 as well as noisy layers for exploration https://arxiv.org/abs/1706.10295 .
 
-![Alt text](/relative/CodeOutline.jpg?raw=true "Optional Title")
+![Alt text](/relative/CodeOutline.PNG?raw=true "Optional Title")
 
   
   
