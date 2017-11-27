@@ -35,10 +35,6 @@ class Environnement:
         self.class_indexes = [np.where(self.y_train == i) for i in range(10)]
 
     def get_values(self, actions, targets):
-        if actions.mean() >= 1.0 or actions.mean() <= -1:
-            print(actions.mean())
-            return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-
         actions = np.reshape(actions, (actions.shape[0], 28*28))
         self.model.fit(actions, targets)
         pred_val = self.model.predict(self.gbm_x_val)
