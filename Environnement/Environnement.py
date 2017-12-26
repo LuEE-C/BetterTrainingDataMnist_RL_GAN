@@ -1,7 +1,5 @@
 import numpy as np
-import numba as nb
 from lightgbm import LGBMClassifier
-import os
 from keras.datasets import mnist
 from sklearn.metrics import f1_score
 import warnings
@@ -21,13 +19,20 @@ class Environnement:
         self.x_test -= 127.5
         self.x_test /= 127.5
 
-        self.x_train = np.reshape(self.x_train, (self.x_train.shape[0], 28, 28, 1))
 
+        self.class_indexes = [np.where(self.y_train == i) for i in range(10)]
+        choices = np.array([np.random.choice(class_index[0], 1000)
+                            for class_index in self.class_indexes]).flatten()
+        self.gbm_x_val = np.reshape(self.x_train[choices], (self.x_train[choices].shape[0], 28*28))
+        self.y_val = self.y_train[choices]
+
+        self.x_train = self.x_train[~choices]
+        self.y_train = self.y_train[~choices]
+
+        self.x_train = np.reshape(self.x_train, (self.x_train.shape[0], 28, 28, 1))
 
         self.gbm_x_train = np.reshape(self.x_train, (self.x_train.shape[0], 28 * 28))
         self.gbm_x_test = np.reshape(self.x_test, (self.x_test.shape[0], 28 * 28))
-        self.y_test, self.y_val = self.y_test[:self.gbm_x_test.shape[0]//3], self.y_test[self.gbm_x_test.shape[0]//3:]
-        self.gbm_x_test, self.gbm_x_val = self.gbm_x_test[:self.gbm_x_test.shape[0]//3], self.gbm_x_test[self.gbm_x_test.shape[0]//3:]
 
         self.model = LGBMClassifier(objective='multiclass', num_class=10, n_jobs=1, min_child_samples=1,
                                     min_child_weight=0, min_data_in_bin=1, verbosity=-1, verbose=-1)
@@ -59,5 +64,5 @@ class Environnement:
         return state, f1, targets
 
 if __name__ == '__main__':
-    env = Environnement(10)
+    env = Environnement(1)
     print(env.query_state())
