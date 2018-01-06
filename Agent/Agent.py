@@ -2,214 +2,104 @@ import os
 
 import numba as nb
 import numpy as np
-import pickle
+import math
 
 import keras.backend as K
-from keras.layers import Input, Dense, PReLU, Flatten, Concatenate, Conv2D, MaxPooling2D
-from keras.models import Model
-from keras.optimizers import Adam
+from PriorityExperienceReplay.PriorityExperienceReplay import Experience
 
-from NoisyDense import NoisyDense
-from DenseNet import DenseNet
+import tensorflow as tf
+
+from Actor import ActorNetwork
+from Critic import CriticNetwork
 
 from Environnement.Environnement import Environnement
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-def policy_loss(actual_value, predicted_value, old_prediction, mask):
-    advantage = actual_value - predicted_value
-
-    def loss(y_true, y_pred):
-        prob = K.mean(mask * (K.square(y_pred - y_true)))
-        old_prob = K.mean(mask * (K.square(old_prediction - y_true)))
-
-        # Prob instead of logprob cause logprob(0) is all over the place
-        #log_prob = K.mean(K.log(prob + 1e-10))
-
-        r = K.mean(prob / (old_prob + 1e-10))
-        return - prob * K.mean(K.minimum(r * advantage, K.clip(r, min_value=0.8, max_value=1.2) * advantage))
-    return loss
-
 
 class Agent:
-    def __init__(self, training_epochs=10, from_save=False, amount_per_class=10):
-        self.training_epochs = training_epochs
+    def __init__(self, amount_per_class=10):
         self.environnement = Environnement(amount_per_class=amount_per_class)
         self.batch_size = amount_per_class * 10
-        self.noise = .55
 
         # Bunch of placeholders values
         self.dummy_value = np.zeros((self.batch_size, 1))
         self.dummy_predictions = np.zeros((self.batch_size, 784))
 
-        self.critic_losses, self.policy_losses = [], []
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        self.sess = tf.Session(config=config)
+        K.set_learning_phase(1)
+        K.set_session(self.sess)
 
-        self.replay_policy_losses, self.replay_critic_losses = [], []
-        self.values, self.test_values = [], []
-        self.actor = self._build_actor()
-        self.critic = self._build_critic()
+        self.atoms = 51
+        self.v_max = 2
+        self.v_min = -2
+        self.delta_z = (self.v_max - self.v_min) / float(self.atoms - 1)
+        self.z_steps = np.array([self.v_min + i * self.delta_z for i in range(self.atoms)]).astype(np.float32)
 
-        if from_save is True:
-            self.actor.load_weights('actor')
-            self.critic.load_weights('critic')
-
-    def _build_actor(self):
-
-        state_input = Input(shape=(28, 28, 1))
-
-        # Used for loss function
-        actual_value = Input(shape=(1,))
-        predicted_value = Input(shape=(1,))
-        old_predictions = Input(shape=(784,))
-        mask = Input(shape=(784,))
-
-        class_input = Input(shape=(1,))
-        digit_class = Dense(128)(class_input)
-        digit_class = PReLU()(digit_class)
-        digit_class = Dense(128)(digit_class)
-        digit_class = PReLU()(digit_class)
-
-        main_network = Conv2D(64, (3,3), padding='same')(state_input)
-        main_network = PReLU()(main_network)
-        main_network = MaxPooling2D()(main_network)
-        main_network = Conv2D(128, (3,3), padding='same')(main_network)
-        main_network = PReLU()(main_network)
-        main_network = MaxPooling2D()(main_network)
-
-        main_network = Flatten()(main_network)
-
-        main_network = Concatenate()([main_network, digit_class])
-
-        main_network = Dense(256)(main_network)
-        main_network = PReLU()(main_network)
-
-        actor = Dense(512)(main_network)
-        actor = PReLU()(actor)
-        # actor = NoisyDense(28 * 28, activation='tanh', sigma_init=0.5, name='actor_output')(actor)
-        actor = Dense(28 * 28, activation='tanh')(actor)
-
-        actor_model = Model(inputs=[state_input, actual_value, predicted_value, old_predictions, class_input, mask],
-                             outputs=[actor])
-        actor_model.compile(optimizer=Adam(),
-                             loss=[policy_loss(actual_value=actual_value,
-                                               predicted_value=predicted_value,
-                                               old_prediction=old_predictions,
-                                               mask=mask
-                                               )
-                                   ])
-
-        actor_model.summary()
-        return actor_model
-
-    def _build_critic(self):
-
-        state_input = Input(shape=(28, 28, 1))
-
-        class_input = Input(shape=(1,))
-        digit_class = Dense(128)(class_input)
-        digit_class = PReLU()(digit_class)
-        digit_class = Dense(128)(digit_class)
-        digit_class = PReLU()(digit_class)
-
-        action_input = Input(shape=(784,))
-        action = Dense(256)(action_input)
-        action = PReLU()(action)
-        action = Dense(128)(action)
-        action = PReLU()(action)
-
-
-        main_network = Conv2D(64, (3,3), padding='same')(state_input)
-        main_network = PReLU()(main_network)
-        main_network = MaxPooling2D()(main_network)
-        main_network = Conv2D(128, (3,3), padding='same')(main_network)
-        main_network = PReLU()(main_network)
-        main_network = MaxPooling2D()(main_network)
-        main_network = Conv2D(256, (3,3), padding='same')(main_network)
-        main_network = PReLU()(main_network)
-        main_network = Flatten()(main_network)
-
-        main_network = Concatenate()([main_network, digit_class, action])
-
-        main_network = Dense(256)(main_network)
-        main_network = PReLU()(main_network)
-
-        critic = Dense(512)(main_network)
-        critic = PReLU()(critic)
-        critic = Dense(1)(critic)
-
-        critic_model = Model(inputs=[state_input, class_input, action_input],
-                             outputs=[critic])
-        critic_model.compile(optimizer=Adam(),
-                             loss='mse')
-
-        critic_model.summary()
-        return critic_model
-
-    def print_average_weight(self):
-        mean = np.mean(self.actor.get_layer('actor_output').get_weights()[1])
-        # The exploration noise is relative to the learned amount of noise
-        self.noise = 0.05 + .5 * mean
-        return mean
+        self.actor = ActorNetwork(self.sess, 28*28 + 10, 28*28, self.batch_size, tau=0.001, lr=5*10e-5)
+        self.critic = CriticNetwork(self.sess, 28*28 + 10, 28*28, self.batch_size, tau=0.001, lr=5*10e-5)
+        self.memory = Experience(memory_size=1000000, batch_size=self.batch_size, alpha=0.5)
 
     def train(self, epoch):
 
-        value_list, test_values_list, policy_losses, critic_losses, classification_losses = [], [], [], [], []
         e = 0
         while e <= epoch:
             done = False
             print('Epoch :', e)
             batch_num = 0
+            while self.memory.tree.size < 2000:
+                self.add_values_to_memory()
+
             while done is False:
+                if batch_num % 4 == 0:
+                    self.add_values_to_memory()
 
-                batch_x, batch_f1, batch_y = self.environnement.query_state()
-                old_predictions = self.actor.predict([batch_x, self.dummy_value, self.dummy_value, self.dummy_predictions, batch_y, self.dummy_predictions])
-                actions, new_predictions, mask = self.get_actions(old_predictions, batch_x)
-                predicted_values = self.critic.predict([batch_x, batch_y, mask])
-                values, test = self.get_values(new_predictions, batch_f1, batch_y)
-                value_list.append(np.mean(values))
-                test_values_list.append(np.mean(test))
+                self.train_loop()
+                batch_num += 1
 
-                tmp_loss = np.zeros(shape=(self.training_epochs, 2))
-                for i in range(self.training_epochs):
-                    tmp_loss[i, 0 ] = self.actor.train_on_batch([batch_x, values, predicted_values, old_predictions, batch_y, mask], [actions])
-                    tmp_loss[i, 1] = self.critic.train_on_batch([batch_x, batch_y, mask], [values])
-
-                # self.actor.get_layer("actor_output").sample_noise()
-                policy_losses.append(np.mean(tmp_loss[:,0]))
-                critic_losses.append(np.mean(tmp_loss[:,1]))
 
                 if batch_num % (100000//self.batch_size) == 0:
-                    self.noise = 0.05 + 0.25 / ((np.mean(value_list) + 3) ** 2)
-                    self.save_losses(critic_losses, policy_losses, value_list, test_values_list)
-                    self.print_most_recent_losses(batch_num, e, value_list, test_values_list)
-                    value_list, test_values_list, policy_losses, critic_losses = [], [], [], []
-
-                    self.actor.save_weights('actor')
-                    self.critic.save_weights('critic')
+                    batch_x, batch_f1, batch_y = self.environnement.query_state()
+                    batch_y_prime = self.flatten_digit_class(batch_y)
+                    pred_x = np.reshape(batch_x, (self.batch_size, 28 * 28))
+                    pred_x = np.concatenate([pred_x, batch_y_prime], axis=1)
+                    old_predictions = self.actor.target_model.predict([pred_x])
+                    values, test_values = self.get_values(np.reshape(batch_x, old_predictions.shape) + 2 * old_predictions, batch_f1, batch_y)
+                    print(batch_num, values, test_values)
 
                 batch_num += 1
             e += 1
 
+    def train_loop(self):
+        states, actions, reward, indices = self.make_dataset()
+        loss = self.critic.model.train_on_batch([states, actions], reward)
+        self.memory.priority_update(indices, [loss for _ in range(len(indices))])
+        a_for_grad = self.actor.target_model.predict(states)
+        grads = self.critic.gradients(states, a_for_grad)
+        self.actor.train(states, grads)
+        self.actor.target_train()
+        self.critic.target_train()
 
-    def save_losses(self, critic_losses, policy_losses, values, test_values):
-        self.critic_losses.append(np.mean(critic_losses))
-        self.policy_losses.append(np.mean(policy_losses))
-        self.values.append(np.mean(values))
-        self.test_values.append(np.mean(test_values))
-        pickle.dump(self.critic_losses, open('critic_loss.pkl', 'wb'))
-        pickle.dump(self.policy_losses, open('policy_loss.pkl', 'wb'))
-        pickle.dump(self.values, open('values.pkl', 'wb'))
-        pickle.dump(self.test_values, open('test_values.pkl', 'wb'))
+    def add_values_to_memory(self):
+        batch_x, batch_f1, batch_y = self.environnement.query_state()
+        batch_y_prime = self.flatten_digit_class(batch_y)
+        pred_x = np.reshape(batch_x, (self.batch_size, 28 * 28))
+        pred_x = np.concatenate([pred_x, batch_y_prime], axis=1)
+        old_predictions = self.actor.target_model.predict(pred_x)
+        actions, new_predictions = self.get_actions(old_predictions, batch_x)
+        values, test = self.get_values(new_predictions, batch_f1, batch_y)
 
-    def print_most_recent_losses(self, batch_num, e, value_list, test_values_list):
-        print()
-        print('Batch number :', batch_num, '\tEpoch :', e, '\tAverage values :', np.mean(value_list), '\tAverage test values :', np.mean(test_values_list))
-        print('Policy losses :', '%.5f' % np.mean(self.policy_losses[-(100000//self.batch_size):]),
-              '\tCritic losses :', '%.5f' % np.mean(self.critic_losses[-(100000//self.batch_size):]),
-              '\tCurrent noise :', '%.5f' % self.noise,
-              # '\tAverage Noisy Layer :','%.5f' % self.print_average_weight()
-              )
+        for i in range(pred_x.shape[0]):
+            self.memory.add([pred_x[i], actions[i], values[i]], 5)
 
+    @nb.jit
+    def flatten_digit_class(self, batch_y):
+        batch_y_prime = np.zeros(shape=(self.batch_size, 10))
+        for i in range(batch_y.shape[0]):
+            batch_y_prime[batch_y[i]] = 1
+        return batch_y_prime
 
     @nb.jit
     def get_values(self, actions, batch_f1, batch_y):
@@ -225,22 +115,35 @@ class Agent:
 
         return values/normalizing_factor, test/normalizing_factor
 
-
     @nb.jit
     def get_actions(self, old_predictions, old_state):
-        action = np.random.random_integers(0, 28*28 - 1, (old_predictions.shape[0], 1))
-        actions = old_predictions
-        mask = np.zeros(old_predictions.shape)
-        new_predictions = np.reshape(old_state, (actions.shape))
-        for i in range(action.shape[0]):
-            actions[i, action[i]] += np.random.normal(loc=0, scale=self.noise, size=(1,))
-            # Adding twice the amount instead of once so it can bring a 1 to a -1 and vice versa
-            new_predictions[i, action[i]] += 2*actions[i, action[i]]
-            mask[i, action[i]] = 1
+        actions = old_predictions + np.random.normal(loc=0, scale=1, size=old_predictions.shape)
+        new_predictions = np.reshape(old_state, (actions.shape)) + actions
         actions = np.clip(actions, -1, 1)
         new_predictions = np.clip(new_predictions, -1, 1)
-        return actions, new_predictions, mask
+        return actions, new_predictions
 
+    def make_dataset(self):
+        data, weights, indices = self.memory.select(0.6)
+        states, reward, actions = [], [], []
+        for i in range(self.batch_size):
+            states.append(data[i][0])
+            actions.append(data[i][1])
+            reward.append(data[i][2])
+        states = np.array(states)
+        reward = np.array(reward)
+        actions = np.array(actions)
+        return states, actions, reward, indices
+
+    @nb.jit
+    def update_m_prob(self, reward, m_prob, z):
+        for i in range(self.batch_size):
+            for j in range(self.atoms):
+                Tz = min(self.v_max, max(self.v_min, reward[i]))
+                bj = (Tz - self.v_min) / self.delta_z
+                m_l, m_u = math.floor(bj), math.ceil(bj)
+                m_prob[i,  int(m_l)] += z[i, j] * (m_u - bj)
+                m_prob[i,  int(m_u)] += z[i, j] * (bj - m_l)
 
 if __name__ == '__main__':
     agent = Agent(amount_per_class=10)
