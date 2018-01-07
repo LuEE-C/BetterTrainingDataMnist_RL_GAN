@@ -40,7 +40,7 @@ class Agent:
 
         self.actor = ActorNetwork(self.sess, 28*28 + 10, 28*28, self.batch_size, tau=0.001, lr=5*10e-5)
         self.critic = CriticNetwork(self.sess, 28*28 + 10, 28*28, self.batch_size, tau=0.001, lr=5*10e-5)
-        self.memory = Experience(memory_size=1000000, batch_size=self.batch_size, alpha=0.5)
+        self.memory = Experience(memory_size=100000, batch_size=self.batch_size, alpha=0.5)
 
     def train(self, epoch):
 
@@ -49,45 +49,43 @@ class Agent:
             done = False
             print('Epoch :', e)
             batch_num = 0
-            while self.memory.tree.size < 2000:
+            while self.memory.tree.size < 100:
                 self.add_values_to_memory()
 
             while done is False:
                 if batch_num % 4 == 0:
                     self.add_values_to_memory()
-
                 self.train_loop()
                 batch_num += 1
-
 
                 if batch_num % (100000//self.batch_size) == 0:
                     batch_x, batch_f1, batch_y = self.environnement.query_state()
                     batch_y_prime = self.flatten_digit_class(batch_y)
                     pred_x = np.reshape(batch_x, (self.batch_size, 28 * 28))
                     pred_x = np.concatenate([pred_x, batch_y_prime], axis=1)
-                    old_predictions = self.actor.target_model.predict([pred_x])
+                    old_predictions = self.actor.model.predict([pred_x])
                     values, test_values = self.get_values(np.reshape(batch_x, old_predictions.shape) + 2 * old_predictions, batch_f1, batch_y)
                     print(batch_num, values, test_values)
 
-                batch_num += 1
             e += 1
 
     def train_loop(self):
         states, actions, reward, indices = self.make_dataset()
         loss = self.critic.model.train_on_batch([states, actions], reward)
-        self.memory.priority_update(indices, [loss for _ in range(len(indices))])
-        a_for_grad = self.actor.target_model.predict(states)
+
+        a_for_grad = self.actor.model.predict(states)
         grads = self.critic.gradients(states, a_for_grad)
         self.actor.train(states, grads)
-        self.actor.target_train()
-        self.critic.target_train()
+        # self.actor.target_train()
+        # self.critic.target_train()
+        self.memory.priority_update(indices, [loss for _ in range(len(indices))])
 
     def add_values_to_memory(self):
         batch_x, batch_f1, batch_y = self.environnement.query_state()
         batch_y_prime = self.flatten_digit_class(batch_y)
         pred_x = np.reshape(batch_x, (self.batch_size, 28 * 28))
         pred_x = np.concatenate([pred_x, batch_y_prime], axis=1)
-        old_predictions = self.actor.target_model.predict(pred_x)
+        old_predictions = self.actor.model.predict(pred_x)
         actions, new_predictions = self.get_actions(old_predictions, batch_x)
         values, test = self.get_values(new_predictions, batch_f1, batch_y)
 
