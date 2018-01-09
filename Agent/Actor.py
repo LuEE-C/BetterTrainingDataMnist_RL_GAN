@@ -1,13 +1,14 @@
-from keras.layers import Input, Dense, PReLU, BatchNormalization
+from keras.layers import Input, Dense, LeakyReLU, BatchNormalization, Conv2D, Flatten, Reshape
 from keras.models import Model
 import tensorflow as tf
 import keras.backend as K
+import numpy as np
+from NoisyDense import NoisyDense
 
 
 class ActorNetwork(object):
-    def __init__(self, sess, state_size, action_size, batch_size, tau, lr):
+    def __init__(self, sess, state_size, action_size, tau, lr):
         self.sess = sess
-        self.batch_size = batch_size
         self.tau = tau
         self.lr = lr
         self.state_size = state_size
@@ -36,15 +37,30 @@ class ActorNetwork(object):
     #         actor_target_weights[i] = self.tau * actor_weights[i] + (1 - self.tau)* actor_target_weights[i]
     #     self.target_model.set_weights(actor_target_weights)
 
+    def get_average_random_weight(self):
+        return np.mean(self.model.get_layer('out_actions').get_weights()[1])
+
     def create_actor_network(self):
         state_input = Input(shape=(self.state_size,))
 
-        main_network = Dense(128)(state_input)
-        main_network = PReLU()(main_network)
-        main_network = Dense(128)(main_network)
-        main_network = PReLU()(main_network)
+        main_network = Reshape((28, 28, 1))(state_input)
+        main_network = Conv2D(512, (3,3))(main_network)
+        main_network = LeakyReLU()(main_network)
+        main_network = Conv2D(256, (3,3))(main_network)
+        main_network = LeakyReLU()(main_network)
+        main_network = Conv2D(128, (3,3))(main_network)
+        main_network = LeakyReLU()(main_network)
+        main_network = Conv2D(64, (3,3))(main_network)
+        main_network = LeakyReLU()(main_network)
+        main_network = Flatten()(main_network)
 
-        outputs = Dense(28*28, activation='tanh', name='actions')(main_network)
+        # main_network = Dense(2048)(state_input)
+        # main_network = LeakyReLU()(main_network)
+        # main_network = Dense(2048)(main_network)
+        # main_network = LeakyReLU()(main_network)
+
+        # outputs = Dense(28 * 28, activation='tanh', name='actions')(main_network)
+        outputs = NoisyDense(28 * 28, activation='tanh', name='out_actions', sigma_init=1)(main_network)
 
         actor = Model(inputs=[state_input], outputs=outputs)
         actor.summary()

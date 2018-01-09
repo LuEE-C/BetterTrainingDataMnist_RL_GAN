@@ -1,13 +1,12 @@
-from keras.layers import Input, Dense, PReLU, CuDNNGRU, BatchNormalization, Concatenate
+from keras.layers import Input, Dense, LeakyReLU, Concatenate, Reshape, Conv2D, Flatten
 from keras.models import Model
 from keras.optimizers import Adam
 import keras.backend as K
 import tensorflow as tf
 
 class CriticNetwork(object):
-    def __init__(self, sess, state_size, action_size, batch_size, tau, lr):
+    def __init__(self, sess, state_size, action_size, tau, lr):
         self.sess = sess
-        self.batch_size = batch_size
         self.tau = tau
         self.lr = lr
         self.action_size = action_size
@@ -38,12 +37,24 @@ class CriticNetwork(object):
         state_input = Input(shape=(self.state_size,))
         action_input = Input(shape=(self.action_size,))
 
-        main_network = Dense(128)(state_input)
-        main_network = PReLU()(main_network)
+        # main_network = Reshape((28, 28, 1))(state_input)
+        # main_network = Conv2D(512, (3,3))(main_network)
+        # main_network = LeakyReLU()(main_network)
+        # main_network = Conv2D(256, (3,3))(main_network)
+        # main_network = LeakyReLU()(main_network)
+        # main_network = Conv2D(128, (3,3))(main_network)
+        # main_network = LeakyReLU()(main_network)
+        # main_network = Conv2D(64, (3,3))(main_network)
+        # main_network = LeakyReLU()(main_network)
+        # main_network = Flatten()(main_network)
+
+
+        main_network = Dense(2048)(state_input)
+        main_network = LeakyReLU()(main_network)
 
         concat_network = Concatenate()([main_network, action_input])
-        concat_network = Dense(128)(concat_network)
-        concat_network = PReLU()(concat_network)
+        concat_network = Dense(2048)(concat_network)
+        concat_network = LeakyReLU()(concat_network)
 
         value_prediction = Dense(1, name='value_prediction')(concat_network)
         # value_prediction = Dense(51, activation='softmax')(concat_network)

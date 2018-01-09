@@ -38,9 +38,9 @@ class Agent:
         self.delta_z = (self.v_max - self.v_min) / float(self.atoms - 1)
         self.z_steps = np.array([self.v_min + i * self.delta_z for i in range(self.atoms)]).astype(np.float32)
 
-        self.actor = ActorNetwork(self.sess, 28*28 + 10, 28*28, self.batch_size, tau=0.001, lr=5*10e-5)
-        self.critic = CriticNetwork(self.sess, 28*28 + 10, 28*28, self.batch_size, tau=0.001, lr=5*10e-5)
-        self.memory = Experience(memory_size=100000, batch_size=self.batch_size, alpha=0.5)
+        self.actor = ActorNetwork(self.sess, 28*28 + 10, 28*28, tau=0.001, lr=5*10e-5)
+        self.critic = CriticNetwork(self.sess, 28*28 + 10, 28*28, tau=0.001, lr=5*10e-5)
+        self.memory = Experience(memory_size=1000000, batch_size=self.batch_size*10, alpha=0.5)
 
     def train(self, epoch):
 
@@ -49,7 +49,7 @@ class Agent:
             done = False
             print('Epoch :', e)
             batch_num = 0
-            while self.memory.tree.size < 100:
+            while self.memory.tree.size < 10000:
                 self.add_values_to_memory()
 
             while done is False:
@@ -65,7 +65,7 @@ class Agent:
                     pred_x = np.concatenate([pred_x, batch_y_prime], axis=1)
                     old_predictions = self.actor.model.predict([pred_x])
                     values, test_values = self.get_values(np.reshape(batch_x, old_predictions.shape) + 2 * old_predictions, batch_f1, batch_y)
-                    print(batch_num, values, test_values)
+                    print('Batch num :', batch_num, '\tValues :', np.mean(values), '\tTest values :', np.mean(test_values))
 
             e += 1
 
@@ -115,7 +115,7 @@ class Agent:
 
     @nb.jit
     def get_actions(self, old_predictions, old_state):
-        actions = old_predictions + np.random.normal(loc=0, scale=1, size=old_predictions.shape)
+        actions = old_predictions # + np.random.normal(loc=0, scale=1, size=old_predictions.shape)
         new_predictions = np.reshape(old_state, (actions.shape)) + actions
         actions = np.clip(actions, -1, 1)
         new_predictions = np.clip(new_predictions, -1, 1)
@@ -144,5 +144,5 @@ class Agent:
                 m_prob[i,  int(m_u)] += z[i, j] * (bj - m_l)
 
 if __name__ == '__main__':
-    agent = Agent(amount_per_class=10)
-    agent.train(epoch=5000)
+    agent = Agent(amount_per_class=1)
+    agent.train(epoch=1)
