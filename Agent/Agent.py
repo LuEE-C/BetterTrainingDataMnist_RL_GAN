@@ -115,7 +115,7 @@ class Agent:
 
     @nb.jit
     def get_actions(self, old_predictions, old_state):
-        actions = old_predictions # + np.random.normal(loc=0, scale=1, size=old_predictions.shape)
+        actions = old_predictions + np.random.normal(loc=0, scale=1, size=old_predictions.shape)
         new_predictions = np.reshape(old_state, (actions.shape)) + actions
         actions = np.clip(actions, -1, 1)
         new_predictions = np.clip(new_predictions, -1, 1)

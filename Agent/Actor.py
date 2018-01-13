@@ -43,24 +43,14 @@ class ActorNetwork(object):
     def create_actor_network(self):
         state_input = Input(shape=(self.state_size,))
 
-        main_network = Reshape((28, 28, 1))(state_input)
-        main_network = Conv2D(512, (3,3))(main_network)
+        main_network = Dense(2048)(state_input)
         main_network = LeakyReLU()(main_network)
-        main_network = Conv2D(256, (3,3))(main_network)
+        main_network = Dense(2048)(main_network)
         main_network = LeakyReLU()(main_network)
-        main_network = Conv2D(128, (3,3))(main_network)
+        main_network = Dense(2048)(main_network)
         main_network = LeakyReLU()(main_network)
-        main_network = Conv2D(64, (3,3))(main_network)
-        main_network = LeakyReLU()(main_network)
-        main_network = Flatten()(main_network)
 
-        # main_network = Dense(2048)(state_input)
-        # main_network = LeakyReLU()(main_network)
-        # main_network = Dense(2048)(main_network)
-        # main_network = LeakyReLU()(main_network)
-
-        # outputs = Dense(28 * 28, activation='tanh', name='actions')(main_network)
-        outputs = NoisyDense(28 * 28, activation='tanh', name='out_actions', sigma_init=1)(main_network)
+        outputs = Dense(28 * 28, activation='tanh', name='actions')(main_network)
 
         actor = Model(inputs=[state_input], outputs=outputs)
         actor.summary()
